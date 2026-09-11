@@ -15,6 +15,18 @@ def get_connection():
     return psycopg2.connect(DATABASE_URL)
 
 
+from fastmcp.server.dependencies import get_http_headers
+
+@mcp.tool()
+def debug_auth():
+    headers = get_http_headers()
+
+    return {
+        "authorization_present": "authorization" in headers,
+        "authorization": headers.get("authorization")
+    }
+
+
 @mcp.tool()
 def add_expense(user_id, amount, category, description="", expense_date=None):
     """Add a new expense entry to the database."""
