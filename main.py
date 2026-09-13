@@ -22,7 +22,7 @@ logger = logging.getLogger("uvicorn.error")  # shows up in Render logs
 
 @mcp.tool()
 async def debug_auth() -> dict:
-    headers = get_http_headers()
+    headers = get_http_headers(include={"authorization"})
     auth_header = headers.get("authorization")
     logger.info(f"[debug_auth] authorization present: {auth_header is not None}, length: {len(auth_header) if auth_header else 0}")
     return {
