@@ -1,8 +1,12 @@
 import os
-
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 import psycopg2
+import logging
+logger = logging.getLogger("uvicorn.error")  # shows up in Render logs
+from fastmcp.server.dependencies import get_http_headers
+import jwt
+from jwt import PyJWKClient
 
 load_dotenv()
 
@@ -15,10 +19,45 @@ def get_connection():
     return psycopg2.connect(DATABASE_URL)
 
 
-from fastmcp.server.dependencies import get_http_headers
 
-import logging
-logger = logging.getLogger("uvicorn.error")  # shows up in Render logs
+CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL")
+_jwks_client = PyJWKClient(CLERK_JWKS_URL)
+
+
+class AuthError(Exception):
+    pass
+
+
+def get_current_user_id() -> str:
+    """Extract and verify the Clerk session token from the incoming request,
+    returning the authenticated user's id (the token's `sub` claim)."""
+    headers = get_http_headers(include={"authorization"})
+    auth_header = headers.get("authorization")
+
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise AuthError("Missing or malformed Authorization header")
+
+    token = auth_header[len("Bearer "):]
+
+    try:
+        signing_key = _jwks_client.get_signing_key_from_jwt(token)
+        payload = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            options={"verify_aud": False},  # Clerk session tokens don't always set aud
+        )
+    except jwt.PyJWTError as e:
+        raise AuthError(f"Invalid token: {e}")
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise AuthError("Token missing sub claim")
+
+    return user_id
+
+
+
 
 @mcp.tool()
 async def debug_auth() -> dict:
@@ -32,8 +71,12 @@ async def debug_auth() -> dict:
 
 
 @mcp.tool()
-def add_expense(user_id, amount, category, description="", expense_date=None):
+def add_expense(amount, category, description="", expense_date=None):
     """Add a new expense entry to the database."""
+    try:
+           user_id = get_current_user_id()
+    except AuthError as e:
+           return {"status": "error", "message": str(e)}
 
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -53,8 +96,12 @@ def add_expense(user_id, amount, category, description="", expense_date=None):
 
 
 @mcp.tool()
-def list_expenses(user_id, start_date=None, end_date=None):
+def list_expenses(start_date=None, end_date=None):
     """List expenses, optionally within a date range."""
+    try:
+           user_id = get_current_user_id()
+    except AuthError as e:
+           return {"status": "error", "message": str(e)}
 
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -85,8 +132,12 @@ def list_expenses(user_id, start_date=None, end_date=None):
 
 
 @mcp.tool()
-def get_summary(user_id, start_date, end_date, category=None):
+def get_summary(start_date, end_date, category=None):
     """Summarize expenses by category within an inclusive date range."""
+    try:
+           user_id = get_current_user_id()
+    except AuthError as e:
+           return {"status": "error", "message": str(e)}
 
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -118,8 +169,12 @@ def get_summary(user_id, start_date, end_date, category=None):
 
 
 @mcp.tool()
-def delete_expense(user_id, expense_id):
+def delete_expense(expense_id):
     """Delete an expense entry."""
+    try:
+           user_id = get_current_user_id()
+    except AuthError as e:
+           return {"status": "error", "message": str(e)}
 
     with get_connection() as conn:
         with conn.cursor() as cur:
