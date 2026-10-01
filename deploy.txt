@@ -1,0 +1,152 @@
+#Establish a connection to aws account (retuns aws access id , secret access id , region , output format)
+- run aws configure  
+
+#Validate setup is established
+- run aws sts get-caller-identity (it should retund some response to make sure setup is established)
+
+#Create virtual enviroment 
+python -m venv .venv
+
+# Activate virtual enviroment
+.\.venv\Scripts\Activate.ps1 
+
+
+# Upgrade pip 
+python -m pip install -upgrade pip
+
+# Install Agentcore toolkit  - it downloads agentcore cli and libraries withing out virtual env 
+pip install bedrock-agentcore-starter-toolkit
+ 
+
+# creating an agentcore project 
+agentcore create --project-name ExpenseTrackerMCP --no-agent
+
+cd ExpenseTrackerMCP
+
+# add mcp server with clerk authetication 
+agentcore add agent `
+  --name ExpenseTrackerMCP `
+  --language Python `
+  --protocol MCP `
+  --authorizer-type CUSTOM_JWT `
+  --discovery-url "https://maximum-python-2899.clerk.accounts.dev/.well-known/openid-configuration" `
+  --allowed-audience "expense-tracker-mcp" `
+  --request-header-allowlist Authorization
+
+ls app
+
+cp ../AWS_MCP/main.py app/folder cli created/main.py
+
+cd app/folder_cli_created
+ 
+
+# add dependecies 
+uv add fastmcp psycopg2-binary "pyjwt[crypto]" python-dotenv boto3
+
+cd ../..
+
+# deploying agent to aws 
+agentcore deploy
+
+
+
+This command will Package agent code and dependencies,Upload the deployment artifact to Amazon S3,Create a Amazon Bedrock AgentCore runtime and deploy  agent to AWS
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#uvicorn agent_api:app --host 0.0.0.0 --port 8000
+
+# First message ever, from a given user
+# User logs into your Next.js app, types "Add an expense of 50 for groceries."
+# route.ts sends this to /ask along with the Clerk token.
+
+# Inside run_agent, we call get_saved_session_id(user_id) — the user_sessions table has no row for this user yet,
+#  so it returns None.
+
+# Since there's no existing session, ClaudeAgentOptions is built without a resume field — the SDK starts a brand-new session from scratch.
+# The agent runs, calls add_expense, finishes.
+#  The ResultMessage that comes back includes a session_id — something like "5b3f2c1a-8d4e-...". 
+# This ID was generated fresh by the SDK for this run.
+# We save that: INSERT INTO user_sessions (user_id, session_id) VALUES ('user_2abc...', '5b3f2c1a-...').
+# The SDK, behind the scenes, has already written the full conversation transcript (prompt, tool calls, tool results, response) to a file on disk, keyed by that session ID.
+# User reloads the page, comes back an hour later, asks "What did I just add?"
+# Same flow: route.ts → /ask with the token.
+# get_saved_session_id(user_id) now finds the row from Step 6 — returns "5b3f2c1a-...".
+# This time ClaudeAgentOptions includes resume="5b3f2c1a-...".
+# The SDK reads that session's transcript file back off disk before running — so when the agent starts, it already "remembers" the earlier turn: the prompt was to add a $50 groceries expense, the tool was called, it succeeded. None of that needs to be re-explained or re-fetched.
+# The agent answers "You added a $50 groceries expense earlier" without needing to call list_expenses again (though it still could, if it wanted to double check) — because the answer is already sitting in its own conversation history.
+# A new session_id may or may not come back — actually, resume continues the same session, so the session_id in the result will typically be the same one you passed in. We still run save_session_id again after every call as a safety net (harmless if it's the same value), so if the SDK ever does rotate to a new ID, you don't lose track of it.
+# Third message, tenth message, etc.
+
+# Same pattern every time — look up the saved ID, pass it as resume, the transcript keeps growing on disk under that one ID, and the agent's context keeps accumulating turn over turn, exactly like a real ongoing conversation.
+
+
+
+
+
+
+
+# 0. Create the secret BEFORE deploying (single quotes so PowerShell leaves special characters alone)
+aws secretsmanager create-secret `
+  --name expense-tracker/database-url `
+  --secret-string 'postgresql://USER:PASSWORD@ep-xxxx-pooler.REGION.aws.neon.tech/DBNAME?sslmode=require' `
+  --region <your-region>
+
+# 1. Create the project
+agentcore create --project-name ExpenseTrackerMCP --no-agent
+cd ExpenseTrackerMCP
+
+# 2. Add the MCP server with Clerk auth (your command, unchanged)
+agentcore add agent `
+  --name ExpenseTrackerMCP `
+  --language Python `
+  --protocol MCP `
+  --authorizer-type CUSTOM_JWT `
+  --discovery-url "https://maximum-python-2899.clerk.accounts.dev/.well-known/openid-configuration" `
+  --allowed-audience "expense-tracker-mcp" `
+  --request-header-allowlist Authorization
+
+# 3. Check the folder name the CLI created
+ls app
+
+# 4. Copy your code (use the folder name from step 3)
+Copy-Item ..\AWS_MCP\main.py app\<folder-from-step-3>\main.py -Force
+
+# 5. Add dependencies
+cd app\<folder-from-step-3>
+uv add fastmcp psycopg2-binary "pyjwt[crypto]" python-dotenv boto3
+cd ..\..
+
+# 6. Deploy (this creates the execution role)
+agentcore deploy
+
+# 7. Find the execution role the CLI created
+aws iam list-roles --query "Roles[?contains(RoleName,'ExpenseTracker')].RoleName"
+
+# 8. Allow that role to read the secret
+@'
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "secretsmanager:GetSecretValue",
+    "Resource": "arn:aws:secretsmanager:<region>:<account-id>:secret:expense-tracker/database-url-*"
+  }]
+}
+'@ | Set-Content -Encoding ascii secrets-policy.json
+
+aws iam put-role-policy `
+  --role-name <role-from-step-7> `
+  --policy-name ReadDatabaseSecret `
+  --policy-document file://secrets-policy.json
